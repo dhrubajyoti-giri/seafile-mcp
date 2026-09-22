@@ -111,7 +111,7 @@ Streamable HTTP + Docker: `cp .env.example .env`, set values, `docker compose up
 Overwrites create new versions in Seafile file history; deletes go to library
 trash. The trash-purge endpoint is deliberately not exposed.
 
-## Tools (26)
+## Tools (29)
 
 User vault (all modes): `register_user`, `update_account_token`,
 `add_library_tokens`, `remove_library_tokens`, `remove_account_token`,
@@ -120,8 +120,10 @@ Libraries (account only):
 `list_libraries`, `get_library_info`, `create_library`, `rename_library`,
 `delete_library` (full mode) · Files: `list_directory`, `get_file_detail`
 (account only), `read_file`, `get_download_link`, `search_files` (account only),
-`create_directory`, `upload_file`, `update_file`, `rename_item`, `move_item`
-(account only), `copy_item` (account only), `delete_item` (full mode, account only).
+`create_directory` (parents auto-created), `upload_file`, `update_file`,
+`rename_item`, `move_item` (account only), `copy_item` (account only),
+`delete_item` (full mode, account only) · Share links (account only):
+`create_share_link`, `list_share_links`, `delete_share_link` (full mode).
 
 Every file/library tool accepts `user_id` (vault), `repo_id` **or**
 `library_name`, plus optional `account_token` / `repo_token` overrides
