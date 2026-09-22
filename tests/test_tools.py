@@ -7,7 +7,7 @@ from seafile_mcp.auth import ScopeError
 from seafile_mcp.config import Config
 from seafile_mcp.seafile_client import SeafileClient
 from seafile_mcp.tools import files as file_tools
-from seafile_mcp.vault import CredentialVault
+from seafile_mcp.sessions import SessionRecord, SessionStore
 
 
 def make_config(**overrides):
@@ -126,19 +126,19 @@ async def test_blank_path_rejected():
 
 
 @pytest.mark.asyncio
-async def test_vault_repo_user_move_gets_scope_error(tmp_path):
-    vault = CredentialVault(str(tmp_path / "v.json"))
-    vault.register("bob", repo_tokens={"Docs": "rt"})
+async def test_session_repo_user_move_gets_scope_error(tmp_path):
+    store = SessionStore(str(tmp_path / "s.json"))
+    token = store.issue(SessionRecord(user_id="bob", repo_tokens={"Docs": "rt"}))
 
     def handler(request: httpx.Request) -> httpx.Response:
         raise AssertionError("no HTTP should happen")
 
     client = make_client(handler)
     try:
-        with pytest.raises(ScopeError, match="requires an account token"):
+        with pytest.raises(ScopeError, match="requires an account-token session"):
             await file_tools.move_item(
-                make_config(), client, vault, "/f.txt", "/d",
-                library_name="Docs", user_id="bob",
+                make_config(), client, store, "/f.txt", "/d",
+                library_name="Docs", session_token=token,
             )
     finally:
         await client.aclose()

@@ -70,25 +70,25 @@ async def test_list_and_delete_share_links():
 
 @pytest.mark.asyncio
 async def test_share_tools_require_account_token(tmp_path):
-    from seafile_mcp.vault import CredentialVault
+    from seafile_mcp.sessions import SessionRecord, SessionStore
 
-    vault = CredentialVault(str(tmp_path / "v.json"))
-    vault.register("bob", repo_tokens={"Docs": "rt"})
+    store = SessionStore(str(tmp_path / "s.json"))
+    token = store.issue(SessionRecord(user_id="bob", repo_tokens={"Docs": "rt"}))
 
     def handler(request: httpx.Request) -> httpx.Response:
         raise AssertionError("no HTTP should happen")
 
     client = make_client(handler)
     try:
-        with pytest.raises(ScopeError, match="requires an account token"):
+        with pytest.raises(ScopeError, match="requires an account-token session"):
             await sharing.create_share_link(
-                make_config(), client, vault, "/f",
-                library_name="Docs", user_id="bob",
+                make_config(), client, store, "/f",
+                library_name="Docs", session_token=token,
             )
-        with pytest.raises(ScopeError, match="requires an account token"):
+        with pytest.raises(ScopeError, match="requires an account-token session"):
             await sharing.list_share_links(
-                make_config(), client, vault,
-                library_name="Docs", user_id="bob",
+                make_config(), client, store,
+                library_name="Docs", session_token=token,
             )
         with pytest.raises(ValueError, match="share_token"):
             await sharing.delete_share_link(
