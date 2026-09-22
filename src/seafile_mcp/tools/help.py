@@ -9,14 +9,16 @@ Verified against official Seafile API docs (seafile-api.readme.io):
 
 from __future__ import annotations
 
-AUTH_HELP = """# Seafile credentials for this MCP server (tokens only — never passwords)
+AUTH_HELP = """# Seafile credentials for this MCP server
 
-Register ONCE with register_user, then pass only user_id on later calls:
-- register_user(user_id="you", account_token="<token>") → full scope.
-- register_user(user_id="you", repo_tokens={"LibName": "<token>"}) → scoped.
-- Maintain with update_account_token / add_library_tokens /
-  remove_library_tokens / remove_account_token / revoke_user.
-- Explicit per-call tokens always override the saved record.
+Log in ONCE, then pass only session_token on later calls:
+- auth_login(user_id="you", password="...") → full-scope session token.
+  Password is used once and never stored. Add otp="123456" with 2FA.
+- auth_register_library(library_token="<token>", library_name="Docs") →
+  scoped session token for those libraries (add more with auth_add_library).
+- Maintain with auth_reauth (after a password change), auth_rotate,
+  auth_revoke, auth_remove_library; inspect with auth_status.
+- Explicit per-call account_token/repo_token always override the session.
 
 ## Mode A — Account token (FULL scope: all libraries, all tools)
 Mint it ONCE with curl (replace values). It never expires; re-mint only
