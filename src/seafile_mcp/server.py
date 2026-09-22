@@ -14,7 +14,7 @@ from . import __version__
 from .auth import AuthError, ScopeError
 from .config import Config
 from .seafile_client import SeafileClient, SeafileError
-from .tools import files, help as help_tools, libraries, users
+from .tools import files, help as help_tools, libraries, sharing, users
 from .vault import CredentialVault, VaultError
 
 SERVER_NAME = "seafile-mcp"
@@ -38,6 +38,11 @@ def _friendly(fn: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]
                         "invalidated by a password change — re-mint with the "
                         "curl command from get_auth_help, save it with "
                         "update_account_token, and retry."
+                    )
+                elif status == 440:
+                    payload["hint"] = (
+                        "Seafile reports this library is encrypted. Decrypt it "
+                        "in the Web UI first, then retry."
                     )
             return payload
 
@@ -157,7 +162,8 @@ def create_server(
 
     mcp.tool(
         name="list_libraries",
-        description="List libraries visible to the account token (account token only).",
+        description="List libraries visible to the account token. "
+        "lib_type: mine, shared, group, mine-group, public (default: all).",
     )(_list_libraries)
 
     @_friendly
@@ -453,6 +459,49 @@ def create_server(
             name="copy_item", description="Copy a file or folder (account token only)."
         )(_copy_item)
 
+        @_friendly
+        async def _create_share_link(
+            path: str,
+            repo_id: str | None = None,
+            library_name: str | None = None,
+            password: str | None = None,
+            expire_days: int | None = None,
+            permissions: dict[str, bool] | None = None,
+            account_token: str | None = None,
+            user_id: str | None = None,
+        ) -> Any:
+            return await sharing.create_share_link(
+                config, client, vault, path, repo_id=repo_id,
+                library_name=library_name, password=password,
+                expire_days=expire_days, permissions=permissions,
+                account_token=account_token, user_id=user_id,
+            )
+
+        mcp.tool(
+            name="create_share_link",
+            description="Create a public share link for a file/folder "
+            "(non-encrypted libraries only).",
+        )(_create_share_link)
+
+        @_friendly
+        async def _list_share_links(
+            repo_id: str | None = None,
+            library_name: str | None = None,
+            path: str | None = None,
+            account_token: str | None = None,
+            user_id: str | None = None,
+        ) -> Any:
+            return await sharing.list_share_links(
+                config, client, vault, repo_id=repo_id,
+                library_name=library_name, path=path,
+                account_token=account_token, user_id=user_id,
+            )
+
+        mcp.tool(
+            name="list_share_links",
+            description="List share links, optionally filtered by library/path.",
+        )(_list_share_links)
+
     # -- full mode: destructive tools ----------------------------------------
     if mode == "full":
 
@@ -492,6 +541,22 @@ def create_server(
             name="delete_item",
             description="Delete a file/folder to trash (full mode only).",
         )(_delete_item)
+
+        @_friendly
+        async def _delete_share_link(
+            share_token: str,
+            account_token: str | None = None,
+            user_id: str | None = None,
+        ) -> Any:
+            return await sharing.delete_share_link(
+                config, client, vault, share_token,
+                account_token=account_token, user_id=user_id,
+            )
+
+        mcp.tool(
+            name="delete_share_link",
+            description="Delete a share link by its token (full mode only).",
+        )(_delete_share_link)
 
     return mcp, client, vault
 
