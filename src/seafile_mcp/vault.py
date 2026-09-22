@@ -11,7 +11,10 @@ Security notes (also in README):
     identity proof. Protect the HTTP endpoint per user (reverse-proxy auth
     or VPN); otherwise anyone could pass another user's id.
   - Tokens rest in a JSON file with owner-only permissions. Back up and
-    protect the host accordingly. Writes are atomic (temp file + rename).
+    protect the host accordingly. Writes are atomic (temp file + rename),
+    but concurrent writes from parallel requests can clobber each other
+    (last writer wins); registration calls are infrequent enough that this
+    is accepted rather than adding a file-lock dependency.
 """
 
 from __future__ import annotations
