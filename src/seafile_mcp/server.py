@@ -14,8 +14,8 @@ from . import __version__
 from .auth import AuthError, ScopeError
 from .config import Config
 from .seafile_client import SeafileClient, SeafileError
-from .tools import files, help as help_tools, libraries, sharing, users
-from .vault import CredentialVault, VaultError
+from .tools import auth_tools, files, help as help_tools, libraries, sharing
+from .sessions import SessionError, SessionStore
 
 SERVER_NAME = "seafile-mcp"
 
@@ -27,7 +27,7 @@ def _friendly(fn: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]
     async def wrapper(*args: Any, **kwargs: Any) -> Any:
         try:
             return await fn(*args, **kwargs)
-        except (AuthError, ScopeError, SeafileError, VaultError, ValueError) as exc:
+        except (AuthError, ScopeError, SeafileError, SessionError, ValueError) as exc:
             status = getattr(exc, "status_code", None)
             payload: dict[str, Any] = {"error": str(exc)}
             if status is not None:
@@ -35,9 +35,8 @@ def _friendly(fn: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]
                 if status == 401:
                     payload["hint"] = (
                         "Token invalid or expired. Account tokens are "
-                        "invalidated by a password change — re-mint with the "
-                        "curl command from get_auth_help, save it with "
-                        "update_account_token, and retry."
+                        "invalidated by a password change — reauth with "
+                        "auth_reauth (or re-mint via get_auth_help) and retry."
                     )
                 elif status == 440:
                     payload["hint"] = (
@@ -52,93 +51,126 @@ def _friendly(fn: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]
 def create_server(
     config: Config,
     client: SeafileClient | None = None,
-    vault: CredentialVault | None = None,
+    store: SessionStore | None = None,
     host: str | None = None,
     port: int | None = None,
-) -> tuple[FastMCP, SeafileClient, CredentialVault]:
+) -> tuple[FastMCP, SeafileClient, SessionStore]:
     """Build the FastMCP app, registering only the tools allowed by mode."""
     mcp = FastMCP(
         SERVER_NAME, host=host or config.host, port=port or config.port
     )
     client = client or SeafileClient(config.server_url, auth_scheme=config.auth_scheme)
-    vault = vault or CredentialVault(config.vault_path)
+    store = store or SessionStore(config.session_path)
     mode = config.mode
 
-    # -- user credential tools (all modes — they manage the vault, not Seafile)
+    # -- session auth tools (all modes — they manage sessions, not Seafile data)
     @_friendly
-    async def _register_user(
+    async def _auth_login(
         user_id: str,
-        account_token: str | None = None,
-        repo_tokens: dict[str, str] | None = None,
+        password: str,
+        otp: str | None = None,
     ) -> Any:
-        return await users.register_user(
-            config, vault, user_id,
-            account_token=account_token, repo_tokens=repo_tokens,
+        return await auth_tools.auth_login(
+            config, client, store, user_id, password, otp
         )
 
     mcp.tool(
-        name="register_user",
-        description="Register credentials once (account_token and/or "
-        "{library_name: token} map). Later calls need only user_id.",
-    )(_register_user)
+        name="auth_login",
+        description="Validate user_id+password against Seafile and issue a "
+        "full-scope session token. Password is used once, never stored.",
+    )(_auth_login)
 
     @_friendly
-    async def _update_account_token(user_id: str, account_token: str) -> Any:
-        return await users.update_account_token(config, vault, user_id, account_token)
-
-    mcp.tool(
-        name="update_account_token",
-        description="Set/replace the stored account token (e.g. after password change).",
-    )(_update_account_token)
-
-    @_friendly
-    async def _add_library_tokens(
-        user_id: str, repo_tokens: dict[str, str]
+    async def _auth_register_library(
+        library_token: str,
+        library_name: str | None = None,
+        repo_id: str | None = None,
+        user_id: str | None = None,
+        session_token: str | None = None,
     ) -> Any:
-        return await users.add_library_tokens(config, vault, user_id, repo_tokens)
+        return await auth_tools.auth_register_library(
+            config, client, store, library_token,
+            library_name=library_name, repo_id=repo_id,
+            user_id=user_id, session_token=session_token,
+        )
 
     mcp.tool(
-        name="add_library_tokens",
-        description="Add {library_name: token} pairs to a user's record.",
-    )(_add_library_tokens)
+        name="auth_register_library",
+        description="Validate a library API token; bootstrap a scoped session "
+        "or attach the library to an existing one. Returns the session token.",
+    )(_auth_register_library)
 
     @_friendly
-    async def _remove_library_tokens(
-        user_id: str, library_names: list[str]
+    async def _auth_reauth(
+        session_token: str,
+        password: str,
+        otp: str | None = None,
     ) -> Any:
-        return await users.remove_library_tokens(config, vault, user_id, library_names)
+        return await auth_tools.auth_reauth(
+            config, client, store, session_token, password, otp
+        )
 
     mcp.tool(
-        name="remove_library_tokens",
-        description="Remove library tokens from a user's record.",
-    )(_remove_library_tokens)
+        name="auth_reauth",
+        description="Refresh a session after a password change.",
+    )(_auth_reauth)
 
     @_friendly
-    async def _remove_account_token(user_id: str) -> Any:
-        return await users.remove_account_token(config, vault, user_id)
+    async def _auth_rotate(session_token: str) -> Any:
+        return await auth_tools.auth_rotate(config, client, store, session_token)
 
     mcp.tool(
-        name="remove_account_token",
-        description="Delete the stored account token (keeps library tokens).",
-    )(_remove_account_token)
+        name="auth_rotate",
+        description="Replace a session token, keeping its credentials.",
+    )(_auth_rotate)
 
     @_friendly
-    async def _revoke_user(user_id: str) -> Any:
-        return await users.revoke_user(config, vault, user_id)
+    async def _auth_revoke(session_token: str) -> Any:
+        return await auth_tools.auth_revoke(config, client, store, session_token)
 
     mcp.tool(
-        name="revoke_user",
-        description="Delete a user's entire credential record.",
-    )(_revoke_user)
+        name="auth_revoke",
+        description="Delete a session.",
+    )(_auth_revoke)
 
     @_friendly
-    async def _my_credentials(user_id: str) -> Any:
-        return await users.my_credentials(config, vault, user_id)
+    async def _auth_add_library(
+        session_token: str,
+        library_token: str,
+        library_name: str | None = None,
+        repo_id: str | None = None,
+    ) -> Any:
+        return await auth_tools.auth_add_library(
+            config, client, store, session_token, library_token,
+            library_name=library_name, repo_id=repo_id,
+        )
 
     mcp.tool(
-        name="my_credentials",
-        description="Show what is registered for a user_id (tokens masked).",
-    )(_my_credentials)
+        name="auth_add_library",
+        description="Attach another library token to a session.",
+    )(_auth_add_library)
+
+    @_friendly
+    async def _auth_remove_library(
+        session_token: str, library_name: str
+    ) -> Any:
+        return await auth_tools.auth_remove_library(
+            config, client, store, session_token, library_name
+        )
+
+    mcp.tool(
+        name="auth_remove_library",
+        description="Detach a library token from a session.",
+    )(_auth_remove_library)
+
+    @_friendly
+    async def _auth_status(session_token: str) -> Any:
+        return await auth_tools.auth_status(config, client, store, session_token)
+
+    mcp.tool(
+        name="auth_status",
+        description="Show a session's scope and libraries (nothing secret).",
+    )(_auth_status)
 
     # -- read tools (all modes) -------------------------------------------
     @_friendly
@@ -153,11 +185,11 @@ def create_server(
     async def _list_libraries(
         lib_type: str | None = None,
         account_token: str | None = None,
-        user_id: str | None = None,
+        session_token: str | None = None,
     ) -> Any:
         return await libraries.list_libraries(
-            config, client, vault,
-            lib_type=lib_type, account_token=account_token, user_id=user_id,
+            config, client, store,
+            lib_type=lib_type, account_token=account_token, session_token=session_token,
         )
 
     mcp.tool(
@@ -172,11 +204,11 @@ def create_server(
         library_name: str | None = None,
         account_token: str | None = None,
         repo_token: str | None = None,
-        user_id: str | None = None,
+        session_token: str | None = None,
     ) -> Any:
         return await libraries.get_library_info(
-            config, client, vault, repo_id=repo_id, library_name=library_name,
-            account_token=account_token, repo_token=repo_token, user_id=user_id,
+            config, client, store, repo_id=repo_id, library_name=library_name,
+            account_token=account_token, repo_token=repo_token, session_token=session_token,
         )
 
     mcp.tool(
@@ -188,11 +220,11 @@ def create_server(
     async def _resolve_library(
         library_name: str,
         account_token: str | None = None,
-        user_id: str | None = None,
+        session_token: str | None = None,
     ) -> Any:
         return await libraries.resolve_library(
-            config, client, vault, library_name,
-            account_token=account_token, user_id=user_id,
+            config, client, store, library_name,
+            account_token=account_token, session_token=session_token,
         )
 
     mcp.tool(
@@ -209,12 +241,12 @@ def create_server(
         library_name: str | None = None,
         account_token: str | None = None,
         repo_token: str | None = None,
-        user_id: str | None = None,
+        session_token: str | None = None,
     ) -> Any:
         return await files.list_directory(
-            config, client, vault, path=path, recursive=recursive,
+            config, client, store, path=path, recursive=recursive,
             entry_type=entry_type, repo_id=repo_id, library_name=library_name,
-            account_token=account_token, repo_token=repo_token, user_id=user_id,
+            account_token=account_token, repo_token=repo_token, session_token=session_token,
         )
 
     mcp.tool(
@@ -229,11 +261,11 @@ def create_server(
         library_name: str | None = None,
         account_token: str | None = None,
         repo_token: str | None = None,
-        user_id: str | None = None,
+        session_token: str | None = None,
     ) -> Any:
         return await files.get_file_detail(
-            config, client, vault, path, repo_id=repo_id, library_name=library_name,
-            account_token=account_token, repo_token=repo_token, user_id=user_id,
+            config, client, store, path, repo_id=repo_id, library_name=library_name,
+            account_token=account_token, repo_token=repo_token, session_token=session_token,
         )
 
     mcp.tool(
@@ -249,12 +281,12 @@ def create_server(
         library_name: str | None = None,
         account_token: str | None = None,
         repo_token: str | None = None,
-        user_id: str | None = None,
+        session_token: str | None = None,
     ) -> Any:
         return await files.read_file(
-            config, client, vault, path, max_chars=max_chars, repo_id=repo_id,
+            config, client, store, path, max_chars=max_chars, repo_id=repo_id,
             library_name=library_name, account_token=account_token,
-            repo_token=repo_token, user_id=user_id,
+            repo_token=repo_token, session_token=session_token,
         )
 
     mcp.tool(
@@ -269,11 +301,11 @@ def create_server(
         library_name: str | None = None,
         account_token: str | None = None,
         repo_token: str | None = None,
-        user_id: str | None = None,
+        session_token: str | None = None,
     ) -> Any:
         return await files.get_download_link(
-            config, client, vault, path, repo_id=repo_id, library_name=library_name,
-            account_token=account_token, repo_token=repo_token, user_id=user_id,
+            config, client, store, path, repo_id=repo_id, library_name=library_name,
+            account_token=account_token, repo_token=repo_token, session_token=session_token,
         )
 
     mcp.tool(name="get_download_link", description="Get a download URL for a file.")(
@@ -287,11 +319,11 @@ def create_server(
         library_name: str | None = None,
         account_token: str | None = None,
         repo_token: str | None = None,
-        user_id: str | None = None,
+        session_token: str | None = None,
     ) -> Any:
         return await files.search_files(
-            config, client, vault, query, repo_id=repo_id, library_name=library_name,
-            account_token=account_token, repo_token=repo_token, user_id=user_id,
+            config, client, store, query, repo_id=repo_id, library_name=library_name,
+            account_token=account_token, repo_token=repo_token, session_token=session_token,
         )
 
     mcp.tool(
@@ -307,11 +339,11 @@ def create_server(
             name: str,
             password: str | None = None,
             account_token: str | None = None,
-            user_id: str | None = None,
+            session_token: str | None = None,
         ) -> Any:
             return await libraries.create_library(
-                config, client, vault, name, password=password,
-                account_token=account_token, user_id=user_id,
+                config, client, store, name, password=password,
+                account_token=account_token, session_token=session_token,
             )
 
         mcp.tool(
@@ -325,12 +357,12 @@ def create_server(
             repo_id: str | None = None,
             library_name: str | None = None,
             account_token: str | None = None,
-            user_id: str | None = None,
+            session_token: str | None = None,
         ) -> Any:
             return await libraries.rename_library(
-                config, client, vault, name, repo_id=repo_id,
+                config, client, store, name, repo_id=repo_id,
                 library_name=library_name, account_token=account_token,
-                user_id=user_id,
+                session_token=session_token,
             )
 
         mcp.tool(name="rename_library", description="Rename a library.")(_rename_library)
@@ -342,12 +374,12 @@ def create_server(
             library_name: str | None = None,
             account_token: str | None = None,
             repo_token: str | None = None,
-            user_id: str | None = None,
+            session_token: str | None = None,
         ) -> Any:
             return await files.create_directory(
-                config, client, vault, path, repo_id=repo_id,
+                config, client, store, path, repo_id=repo_id,
                 library_name=library_name, account_token=account_token,
-                repo_token=repo_token, user_id=user_id,
+                repo_token=repo_token, session_token=session_token,
             )
 
         mcp.tool(name="create_directory", description="Create a folder.")(_create_directory)
@@ -362,12 +394,12 @@ def create_server(
             library_name: str | None = None,
             account_token: str | None = None,
             repo_token: str | None = None,
-            user_id: str | None = None,
+            session_token: str | None = None,
         ) -> Any:
             return await files.upload_file(
-                config, client, vault, path, content, is_base64=is_base64,
+                config, client, store, path, content, is_base64=is_base64,
                 replace=replace, repo_id=repo_id, library_name=library_name,
-                account_token=account_token, repo_token=repo_token, user_id=user_id,
+                account_token=account_token, repo_token=repo_token, session_token=session_token,
             )
 
         mcp.tool(
@@ -383,12 +415,12 @@ def create_server(
             library_name: str | None = None,
             account_token: str | None = None,
             repo_token: str | None = None,
-            user_id: str | None = None,
+            session_token: str | None = None,
         ) -> Any:
             return await files.update_file(
-                config, client, vault, path, content, is_base64=is_base64,
+                config, client, store, path, content, is_base64=is_base64,
                 repo_id=repo_id, library_name=library_name,
-                account_token=account_token, repo_token=repo_token, user_id=user_id,
+                account_token=account_token, repo_token=repo_token, session_token=session_token,
             )
 
         mcp.tool(
@@ -404,12 +436,12 @@ def create_server(
             library_name: str | None = None,
             account_token: str | None = None,
             repo_token: str | None = None,
-            user_id: str | None = None,
+            session_token: str | None = None,
         ) -> Any:
             return await files.rename_item(
-                config, client, vault, path, new_name, is_dir=is_dir,
+                config, client, store, path, new_name, is_dir=is_dir,
                 repo_id=repo_id, library_name=library_name,
-                account_token=account_token, repo_token=repo_token, user_id=user_id,
+                account_token=account_token, repo_token=repo_token, session_token=session_token,
             )
 
         mcp.tool(
@@ -426,12 +458,12 @@ def create_server(
             repo_id: str | None = None,
             library_name: str | None = None,
             account_token: str | None = None,
-            user_id: str | None = None,
+            session_token: str | None = None,
         ) -> Any:
             return await files.move_item(
-                config, client, vault, path, dst_dir, dst_repo_id=dst_repo_id,
+                config, client, store, path, dst_dir, dst_repo_id=dst_repo_id,
                 is_dir=is_dir, repo_id=repo_id, library_name=library_name,
-                account_token=account_token, user_id=user_id,
+                account_token=account_token, session_token=session_token,
             )
 
         mcp.tool(
@@ -447,12 +479,12 @@ def create_server(
             repo_id: str | None = None,
             library_name: str | None = None,
             account_token: str | None = None,
-            user_id: str | None = None,
+            session_token: str | None = None,
         ) -> Any:
             return await files.copy_item(
-                config, client, vault, path, dst_dir, dst_repo_id=dst_repo_id,
+                config, client, store, path, dst_dir, dst_repo_id=dst_repo_id,
                 is_dir=is_dir, repo_id=repo_id, library_name=library_name,
-                account_token=account_token, user_id=user_id,
+                account_token=account_token, session_token=session_token,
             )
 
         mcp.tool(
@@ -468,13 +500,13 @@ def create_server(
             expire_days: int | None = None,
             permissions: dict[str, bool] | None = None,
             account_token: str | None = None,
-            user_id: str | None = None,
+            session_token: str | None = None,
         ) -> Any:
             return await sharing.create_share_link(
-                config, client, vault, path, repo_id=repo_id,
+                config, client, store, path, repo_id=repo_id,
                 library_name=library_name, password=password,
                 expire_days=expire_days, permissions=permissions,
-                account_token=account_token, user_id=user_id,
+                account_token=account_token, session_token=session_token,
             )
 
         mcp.tool(
@@ -489,12 +521,12 @@ def create_server(
             library_name: str | None = None,
             path: str | None = None,
             account_token: str | None = None,
-            user_id: str | None = None,
+            session_token: str | None = None,
         ) -> Any:
             return await sharing.list_share_links(
-                config, client, vault, repo_id=repo_id,
+                config, client, store, repo_id=repo_id,
                 library_name=library_name, path=path,
-                account_token=account_token, user_id=user_id,
+                account_token=account_token, session_token=session_token,
             )
 
         mcp.tool(
@@ -510,11 +542,11 @@ def create_server(
             repo_id: str | None = None,
             library_name: str | None = None,
             account_token: str | None = None,
-            user_id: str | None = None,
+            session_token: str | None = None,
         ) -> Any:
             return await libraries.delete_library(
-                config, client, vault, repo_id=repo_id, library_name=library_name,
-                account_token=account_token, user_id=user_id,
+                config, client, store, repo_id=repo_id, library_name=library_name,
+                account_token=account_token, session_token=session_token,
             )
 
         mcp.tool(
@@ -529,12 +561,12 @@ def create_server(
             repo_id: str | None = None,
             library_name: str | None = None,
             account_token: str | None = None,
-            user_id: str | None = None,
+            session_token: str | None = None,
         ) -> Any:
             return await files.delete_item(
-                config, client, vault, path, is_dir=is_dir, repo_id=repo_id,
+                config, client, store, path, is_dir=is_dir, repo_id=repo_id,
                 library_name=library_name, account_token=account_token,
-                user_id=user_id,
+                session_token=session_token,
             )
 
         mcp.tool(
@@ -546,11 +578,11 @@ def create_server(
         async def _delete_share_link(
             share_token: str,
             account_token: str | None = None,
-            user_id: str | None = None,
+            session_token: str | None = None,
         ) -> Any:
             return await sharing.delete_share_link(
-                config, client, vault, share_token,
-                account_token=account_token, user_id=user_id,
+                config, client, store, share_token,
+                account_token=account_token, session_token=session_token,
             )
 
         mcp.tool(
@@ -558,7 +590,7 @@ def create_server(
             description="Delete a share link by its token (full mode only).",
         )(_delete_share_link)
 
-    return mcp, client, vault
+    return mcp, client, store
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -583,7 +615,7 @@ def main(argv: list[str] | None = None) -> None:
     port = args.port or config.port
 
     async def _run() -> None:
-        mcp, client, _vault = create_server(config, host=host, port=port)
+        mcp, client, _store = create_server(config, host=host, port=port)
         try:
             await mcp.run_async(transport=transport)
         finally:
