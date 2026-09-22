@@ -1,20 +1,24 @@
-"""Per-user credential vault.
+"""Bearer-token session store.
 
-Multi-user flow without fixed tokens in .env:
-  - A client registers once: user_id + account_token and/or
-    {library_name: repo_token} pairs. Saved to a JSON file (mode 0600).
-  - Later calls pass only user_id; the vault supplies the tokens.
-  - Clients can update, add/remove libraries, or revoke everything.
+Flow:
+  - Account: ``auth_login(user_id, password)`` validates against Seafile
+    (``POST /api2/auth-token/``), stores the returned Seafile account token,
+    and issues an opaque MCP session token. The password is used once and
+    never stored.
+  - Library: ``auth_register_library(...)`` validates a library API token
+    (via the repo-info endpoint) and stores it per session, per library.
+    The first call bootstraps a session; later libraries attach with the
+    session token. The reply is always the session (bearer) token.
 
-Security notes (also in README):
-  - user_id is self-asserted by the caller — it is a namespace, not an
-    identity proof. Protect the HTTP endpoint per user (reverse-proxy auth
-    or VPN); otherwise anyone could pass another user's id.
-  - Tokens rest in a JSON file with owner-only permissions. Back up and
-    protect the host accordingly. Writes are atomic (temp file + rename),
-    but concurrent writes from parallel requests can clobber each other
-    (last writer wins); registration calls are infrequent enough that this
-    is accepted rather than adding a file-lock dependency.
+Security properties:
+  - The store maps SHA-256(token) -> record, so a stolen store file yields
+    no usable tokens. The raw session token is shown exactly once, at issue.
+  - Sessions are bearer secrets: whoever holds one may use the stored
+    Seafile credentials. Scope still applies — a session holding only
+    library tokens cannot manage libraries (enforced in ``auth``).
+  - Rotate (``auth_rotate``) or revoke (``auth_revoke``) any time without
+    touching Seafile. Reauth (``auth_reauth``) refreshes the stored Seafile
+    token after a password change.
 """
 
 from __future__ import annotations
