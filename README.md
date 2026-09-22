@@ -9,38 +9,44 @@ Built with [FastMCP](https://github.com/jlowin/fastmcp) (`mcp<2`). Inspired by
 safety modes) and [`5p00kyy/seafile-mcp`](https://github.com/5p00kyy/seafile-mcp)
 (dual account/repo-token env config).
 
-## Auth: register once, then pass only `user_id` (tokens only — never passwords)
+## Auth: log in once, then pass only `session_token`
 
-No tokens are fixed in `.env`. Each user registers once; the server saves the
-tokens in a vault file (`SEAFILE_VAULT_PATH`, default `~/.seafile-mcp/vault.json`,
-mode `0600`). All later calls pass only `user_id`:
+No tokens are fixed in `.env`. Each user authenticates once; the server keeps
+the Seafile credentials in a session store (`SEAFILE_SESSION_PATH`, default
+`~/.seafile-mcp/sessions.json`, mode `0600`) keyed by **SHA-256 hash** of an
+opaque bearer token. All later calls present only that token:
 
-1. `register_user(user_id="alice", account_token="<token>")` — full scope, or
-   `register_user(user_id="bob", repo_tokens={"Docs": "<token>"})` — scoped.
-2. Use any tool with `user_id="alice"` — no tokens per call.
-3. Maintain with `update_account_token`, `add_library_tokens`,
-   `remove_library_tokens`, `remove_account_token`, `revoke_user`;
-   inspect with `my_credentials` (tokens always masked, never revealed).
+1. `auth_login(user_id="alice", password="...")` — validates against Seafile
+   and issues a **full-scope** session token (password used once, never
+   stored; add `otp="123456"` with 2FA). Or `auth_register_library(
+   library_token="<token>", library_name="Docs")` — validates the library
+   token and issues a **scoped** session token.
+2. Use any tool with `session_token="<token>"` — no Seafile tokens per call.
+3. Maintain with `auth_reauth` (after a password change), `auth_rotate`,
+   `auth_revoke`, `auth_add_library`, `auth_remove_library`;
+   inspect with `auth_status` (nothing secret is revealed).
 
 Resolution order per call: explicit `account_token`/`repo_token` params →
-vault record for `user_id` → env defaults (`SEAFILE_ACCOUNT_TOKEN` /
+session record for `session_token` → env defaults (`SEAFILE_ACCOUNT_TOKEN` /
 `SEAFILE_REPO_TOKENS_JSON`, single-user fallback only).
 
-| Credential in vault | Scope |
+| Session scope | Allowed |
 |---|---|
-| **Account token** | Full: all libraries, all tools |
-| **Library API tokens** | Only those libraries; browse/read/upload/rename-folders. Library management, move/copy/delete and search return a clear "requires an account token" error (Seafile exposes no such endpoints for repo tokens) |
+| **Full** (account login) | All libraries, all tools |
+| **Scoped** (library tokens) | Only those libraries; browse/read/upload/rename-folders. Library management, move/copy/delete and search return a clear error (Seafile exposes no such endpoints for repo tokens) |
 
-> **Security note:** `user_id` is self-asserted by the caller — a namespace, not
-> an identity proof. Anyone reaching the endpoint could pass another user's id
-> and use their stored tokens. Protect multi-user HTTP deployments per user
-> (reverse-proxy auth, VPN/Tailscale). For local single-user use, stdio +
-> optional env defaults avoid the vault entirely.
+> **Security note:** a session token is a bearer secret — whoever holds it may
+> use the stored Seafile credentials, and it travels with every call, so
+> always use TLS and protect multi-user HTTP deployments (reverse-proxy auth,
+> VPN/Tailscale). The store file holds Seafile tokens plus only hashes of
+> session tokens; rotate/revoke sessions any time without touching Seafile.
 
 ### Getting an account token (one-time, never expires)
 
-There is **no Web UI page** for account tokens. Mint it with your username and
-password (add `-H 'X-SEAFILE-OTP: <6-digit>'` if you use 2FA):
+Normally you never do this by hand — `auth_login` exchanges your password
+for a Seafile token and stores it in the session. For reference, there is
+**no Web UI page** for account tokens; the manual equivalent is (add
+`-H 'X-SEAFILE-OTP: <6-digit>'` with 2FA):
 
 ```bash
 curl -d "username=YOUR_EMAIL&password=YOUR_PASSWORD" \
@@ -48,8 +54,8 @@ curl -d "username=YOUR_EMAIL&password=YOUR_PASSWORD" \
 # {"token": "24fd3c026886e3121b2ca630805ed425c272cb96"}
 ```
 
-The token is permanent — re-mint only after a password change (which invalidates
-it), then save the new one with `update_account_token`. The `get_auth_help`
+The token is permanent — after a password change it is invalidated, so run
+`auth_reauth` to refresh the session. The `get_auth_help`
 tool repeats these instructions for agents.
 
 ### Getting a library API token (scoped, `r` or `rw`, valid until deleted)
@@ -111,11 +117,12 @@ Streamable HTTP + Docker: `cp .env.example .env`, set values, `docker compose up
 Overwrites create new versions in Seafile file history; deletes go to library
 trash. The trash-purge endpoint is deliberately not exposed.
 
-## Tools (29)
+## Tools (30)
 
-User vault (all modes): `register_user`, `update_account_token`,
-`add_library_tokens`, `remove_library_tokens`, `remove_account_token`,
-`revoke_user`, `my_credentials` · Help: `get_auth_help`, `resolve_library` ·
+Session auth (all modes): `auth_login`, `auth_register_library`,
+`auth_reauth`, `auth_rotate`, `auth_revoke`, `auth_add_library`,
+`auth_remove_library`, `auth_status` · Help: `get_auth_help`,
+`resolve_library` ·
 Libraries (account only):
 `list_libraries`, `get_library_info`, `create_library`, `rename_library`,
 `delete_library` (full mode) · Files: `list_directory`, `get_file_detail`
@@ -125,16 +132,16 @@ Libraries (account only):
 `delete_item` (full mode, account only) · Share links (account only):
 `create_share_link`, `list_share_links`, `delete_share_link` (full mode).
 
-Every file/library tool accepts `user_id` (vault), `repo_id` **or**
+Every file/library tool accepts `session_token`, `repo_id` **or**
 `library_name`, plus optional `account_token` / `repo_token` overrides
-(explicit params win over the vault). `read_file` returns text (truncated
+(explicit params win over the session). `read_file` returns text (truncated
 with notice) or, for binaries, metadata + download link. `upload_file` /
 `update_file` take text or base64 (`is_base64: true`).
 
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest -q   # 53 tests, mocked HTTP (no live server needed)
+.venv/bin/python -m pytest -q   # 58 tests, mocked HTTP (no live server needed)
 ```
 
 ## Roadmap
