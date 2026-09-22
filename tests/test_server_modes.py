@@ -9,13 +9,14 @@ from seafile_mcp.server import create_server
 
 READ_TOOLS = {
     "get_auth_help",
-    "register_user",
-    "update_account_token",
-    "add_library_tokens",
-    "remove_library_tokens",
-    "remove_account_token",
-    "revoke_user",
-    "my_credentials",
+    "auth_login",
+    "auth_register_library",
+    "auth_reauth",
+    "auth_rotate",
+    "auth_revoke",
+    "auth_add_library",
+    "auth_remove_library",
+    "auth_status",
     "list_libraries",
     "get_library_info",
     "resolve_library",
@@ -47,7 +48,7 @@ def make_config(mode):
 
 
 async def tool_names(mode):
-    mcp, client, _vault = create_server(make_config(mode))
+    mcp, client, _store = create_server(make_config(mode))
     try:
         tools = await mcp.list_tools()
         return {t.name for t in tools}
@@ -101,7 +102,7 @@ async def test_repo_token_scope_error_is_friendly_payload():
         transport=httpx.MockTransport(handler),
     )
     try:
-        with pytest.raises(ScopeError, match="requires an account token"):
+        with pytest.raises(ScopeError, match="requires an account-token session"):
             await file_tools.search_files(
                 config, client, None, "report", library_name="Docs"
             )

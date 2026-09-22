@@ -99,5 +99,5 @@ def test_resolve_both_tokens_rejected():
 def test_require_account_blocks_repo_token():
     cfg = make_config(SEAFILE_REPO_TOKENS_JSON='{"Docs": "aaa"}')
     auth = resolve_auth(cfg, library_name="Docs")
-    with pytest.raises(ScopeError, match="requires an account token"):
+    with pytest.raises(ScopeError, match="requires an account-token session"):
         require_account(auth, "delete_item")
