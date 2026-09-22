@@ -34,8 +34,10 @@ SAFE_WRITE_EXTRA = {
     "rename_item",
     "move_item",
     "copy_item",
+    "create_share_link",
+    "list_share_links",
 }
-FULL_EXTRA = {"delete_library", "delete_item"}
+FULL_EXTRA = {"delete_library", "delete_item", "delete_share_link"}
 
 
 def make_config(mode):

@@ -91,6 +91,53 @@ async def test_resolve_library_name_exact_and_case_insensitive():
 
 
 @pytest.mark.asyncio
+async def test_repo_mkdir_uses_form_and_query_path():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["body"] = request.content.decode()
+        return httpx.Response(200, json={"success": True})
+
+    client = make_client(handler)
+    result = await client.repo_mkdir("repo-tok", "/new-dir")
+    assert "path=%2Fnew-dir" in seen["url"] or "path=/new-dir" in seen["url"]
+    assert "operation=mkdir" in seen["body"]
+    assert result == {"success": True}
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_repo_rename_dir_uses_newname():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = request.content.decode()
+        return httpx.Response(200, json="success")
+
+    client = make_client(handler)
+    await client.repo_rename_dir("repo-tok", "/old", "new")
+    assert "operation=rename" in seen["body"]
+    assert "newname=new" in seen["body"]
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_resolve_library_name_single_call():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        return httpx.Response(200, json=[{"id": "r1", "name": "Docs"}])
+
+    client = make_client(handler)
+    lib = await client.resolve_library_name("tok", "docs")
+    assert lib["id"] == "r1"
+    assert len(calls) == 1
+    await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_repo_list_dir_params():
     seen = {}
 
