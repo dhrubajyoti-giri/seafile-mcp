@@ -1,4 +1,4 @@
-"""Tests for the per-user credential vault and vault-based auth resolution."""
+"""Tests for session store: issue/lookup/update/rotate/revoke, hashing."""
 
 import json
 
@@ -31,10 +31,11 @@ def test_raw_token_never_persisted(store):
     token = store.issue(SessionRecord(user_id="alice", account_token="acct-tok"))
     dumped = open(store.path, encoding="utf-8").read()
     assert token not in dumped
+    assert "acct-tok" in dumped  # Seafile tokens must work; session tokens must not
     data = json.loads(dumped)
     assert len(data) == 1
     key = next(iter(data))
-    assert len(key) == 64
+    assert len(key) == 64  # sha256 hex
 
 
 def test_lookup_unknown_returns_none(store):
@@ -85,7 +86,9 @@ def test_resolve_via_session_account(config, store):
 
 def test_resolve_via_session_library(config, store):
     token = store.issue(SessionRecord(user_id="bob", repo_tokens={"Docs": "rt"}))
-    auth = resolve_auth(config, session_token=token, library_name="Docs", store=store)
+    auth = resolve_auth(
+        config, session_token=token, library_name="Docs", store=store
+    )
     assert auth.kind == "repo" and auth.token == "rt"
 
 
@@ -105,7 +108,7 @@ def test_session_repo_user_blocked_from_account_ops(config, store):
 
     token = store.issue(SessionRecord(user_id="bob", repo_tokens={"Docs": "rt"}))
     auth = resolve_auth(config, session_token=token, library_name="Docs", store=store)
-    with pytest.raises(ScopeError, match="requires an account-token session"):
+    with pytest.raises(ScopeError, match="account-token session"):
         require_account(auth, "delete_library")
 
 

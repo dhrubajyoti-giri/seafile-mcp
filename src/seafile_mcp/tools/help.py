@@ -9,7 +9,7 @@ Verified against official Seafile API docs (seafile-api.readme.io):
 
 from __future__ import annotations
 
-AUTH_HELP = """# Seafile credentials for this MCP server
+AUTH_HELP = """# Seafile credentials for this MCP server (tokens only — never passwords)
 
 Log in ONCE, then pass only session_token on later calls:
 - auth_login(user_id="you", password="...") → full-scope session token.
