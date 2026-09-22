@@ -58,6 +58,59 @@ class SeafileClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
+    # -- low level ------------------------------------------------------
+
+    def _schemes_to_try(self, token: str) -> list[str]:
+        if self.auth_scheme != "auto":
+            return [self.auth_scheme]
+        cached = self._scheme_cache.get(token)
+        if cached:
+            return [cached]
+        return ["token", "bearer"]
+
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        token: str,
+        *,
+        params: dict[str, Any] | None = None,
+        data: dict[str, Any] | None = None,
+        json: Any | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> httpx.Response:
+        last: httpx.Response | None = None
+        for scheme in self._schemes_to_try(token):
+            auth_value = f"{'Token' if scheme == 'token' else 'Bearer'} {token}"
+            req_headers = {"Authorization": auth_value, "Accept": "application/json"}
+            if headers:
+                req_headers.update(headers)
+            last = await self._client.request(
+                method, path, params=params, data=data, json=json, headers=req_headers
+            )
+            if last.status_code != 401 or self.auth_scheme != "auto":
+                break
+            continue  # try next scheme
+        assert last is not None
+        # Remember which scheme worked for this token.
+        if last.status_code != 401 and self.auth_scheme == "auto":
+            used = "bearer" if "Bearer" in (last.request.headers.get("Authorization", "")) else "token"
+            self._scheme_cache[token] = used
+        if last.status_code >= 400:
+            raise SeafileError(_error_message(last), status_code=last.status_code)
+        return last
+
+    async def _get_json(
+        self, path: str, token: str, params: dict[str, Any] | None = None
+    ) -> Any:
+        resp = await self._request("GET", path, token, params=params)
+        if not resp.content:
+            return None
+        try:
+            return resp.json()
+        except ValueError:
+            return resp.text
+
     # -- authentication --------------------------------------------------------
 
     async def obtain_account_token(
