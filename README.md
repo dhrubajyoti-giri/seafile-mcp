@@ -55,8 +55,8 @@ curl -d "username=YOUR_EMAIL&password=YOUR_PASSWORD" \
 ```
 
 The token is permanent — after a password change it is invalidated, so run
-`auth_reauth` to refresh the session. The `get_auth_help`
-tool repeats these instructions for agents.
+`auth_reauth` to refresh the session. The `get_auth_help` tool repeats these
+instructions for agents.
 
 ### Getting a library API token (scoped, `r` or `rw`, valid until deleted)
 
