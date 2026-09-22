@@ -146,14 +146,17 @@ class SeafileClient:
         await self._request("DELETE", f"/api2/repos/{repo_id}/", token)
 
     async def resolve_library_name(self, token: str, name: str) -> dict[str, Any]:
-        """Find a library by exact name (case-insensitive fallback)."""
-        for lib in await self.list_libraries(token):
-            if lib.get("name") == name:
-                return lib
+        """Find a library by exact name (case-insensitive fallback), one call."""
         lowered = name.lower()
+        fallback: dict[str, Any] | None = None
         for lib in await self.list_libraries(token):
-            if str(lib.get("name", "")).lower() == lowered:
+            lib_name = str(lib.get("name", ""))
+            if lib_name == name:
                 return lib
+            if fallback is None and lib_name.lower() == lowered:
+                fallback = lib
+        if fallback is not None:
+            return fallback
         raise SeafileError(f'Library not found: "{name}"', status_code=404)
 
     # -- account: files & folders ------------------------------------------
@@ -328,11 +331,13 @@ class SeafileClient:
         return data if isinstance(data, dict) else {}
 
     async def repo_mkdir(self, repo_token: str, path: str) -> Any:
+        # Documented form: query `path` + form-encoded `operation=mkdir`.
         resp = await self._request(
             "POST",
             "/api/v2.1/via-repo-token/dir/",
             repo_token,
-            json={"path": path, "operation": "mkdir"},
+            params={"path": path},
+            data={"operation": "mkdir"},
         )
         try:
             return resp.json()
@@ -346,7 +351,8 @@ class SeafileClient:
             "POST",
             "/api/v2.1/via-repo-token/dir/",
             repo_token,
-            json={"path": path, "operation": "rename", "newname": new_name},
+            params={"path": path},
+            data={"operation": "rename", "newname": new_name},
         )
         try:
             return resp.json()
@@ -382,3 +388,43 @@ class SeafileClient:
         except ValueError:
             pass
         return resp.text.strip().strip('"')
+
+    # -- account: share links --------------------------------------------
+
+    async def list_share_links(
+        self, token: str, repo_id: str | None = None, path: str | None = None
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {}
+        if repo_id:
+            params["repo_id"] = repo_id
+        if path:
+            params["path"] = path
+        data = await self._get_json("/api/v2.1/share-links/", token, params=params or None)
+        return data if isinstance(data, list) else []
+
+    async def create_share_link(
+        self,
+        token: str,
+        repo_id: str,
+        path: str,
+        password: str | None = None,
+        expire_days: int | None = None,
+        permissions: dict[str, bool] | None = None,
+    ) -> dict[str, Any]:
+        # Endpoint requires a JSON body (not form data).
+        body: dict[str, Any] = {"repo_id": repo_id, "path": path}
+        if password:
+            body["password"] = password
+        if expire_days is not None:
+            body["expire_days"] = expire_days
+        if permissions:
+            body["permissions"] = permissions
+        resp = await self._request("POST", "/api/v2.1/share-links/", token, json=body)
+        try:
+            data = resp.json()
+        except ValueError:
+            data = {}
+        return data if isinstance(data, dict) else {"link": resp.text.strip()}
+
+    async def delete_share_link(self, token: str, share_token: str) -> None:
+        await self._request("DELETE", f"/api/v2.1/share-links/{share_token}/", token)
