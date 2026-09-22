@@ -12,6 +12,13 @@ from .common import account_only, resolve, resolve_repo_id
 TEXT_PREVIEW_LIMIT = 200_000
 
 
+def _require_path(path: str, what: str = "path") -> str:
+    cleaned = (path or "").strip()
+    if not cleaned:
+        raise ValueError(f"{what} must not be empty.")
+    return cleaned if cleaned.startswith("/") else "/" + cleaned
+
+
 def _parent_dir(path: str) -> str:
     path = path.rstrip("/") or "/"
     if "/" not in path[1:]:
@@ -37,15 +44,28 @@ async def list_directory(
     user_id: str | None = None,
 ) -> dict | list:
     """List a directory. Works with account or repo token."""
+    path = _require_path(path)
     auth = await resolve(
         config, client, vault,
         account_token=account_token, repo_token=repo_token,
         repo_id=repo_id, library_name=library_name, user_id=user_id,
     )
     if auth.kind == "repo":
-        return await client.repo_list_dir(
+        data = await client.repo_list_dir(
             auth.token, path=path, recursive=recursive, entry_type=entry_type
         )
+        entries = data.get("dirent_list", [])
+        if not isinstance(entries, list):
+            entries = []
+        if entry_type == "f":
+            entries = [e for e in entries if e.get("type") == "file"]
+        elif entry_type == "d":
+            entries = [e for e in entries if e.get("type") == "dir"]
+        return {
+            "path": path,
+            "entries": entries,
+            "permission": data.get("user_perm"),
+        }
     rid = await resolve_repo_id(client, auth, repo_id=repo_id, library_name=library_name)
     entries = await client.list_dir(auth.token, rid, path=path, recursive=recursive)
     if entry_type == "f":
@@ -68,6 +88,7 @@ async def get_file_detail(
 ) -> dict:
     """Get file metadata. Repo-token callers: use list_directory (Seafile has
     no via-repo-token file-detail endpoint)."""
+    path = _require_path(path)
     auth = await resolve(
         config, client, vault,
         account_token=account_token, repo_token=repo_token,
@@ -90,6 +111,7 @@ async def get_download_link(
     user_id: str | None = None,
 ) -> dict:
     """Get a one-time download URL for a file."""
+    path = _require_path(path)
     auth = await resolve(
         config, client, vault,
         account_token=account_token, repo_token=repo_token,
@@ -117,6 +139,8 @@ async def read_file(
 ) -> dict:
     """Download and read a file as text. Binary files return metadata +
     a download link instead of content."""
+    path = _require_path(path)
+    max_chars = min(max_chars, TEXT_PREVIEW_LIMIT)
     link_info = await get_download_link(
         config, client, vault, path,
         repo_id=repo_id, library_name=library_name,
@@ -160,6 +184,8 @@ async def search_files(
 ) -> list[dict]:
     """Full-text/filename search (account token only; requires search
     enabled on the Seafile server)."""
+    if not (query or "").strip():
+        raise ValueError("query must not be empty.")
     auth = await resolve(
         config, client, vault,
         account_token=account_token, repo_token=repo_token,
@@ -183,8 +209,10 @@ async def create_directory(
     repo_token: str | None = None,
     user_id: str | None = None,
 ) -> dict:
-    """Create a folder (parents are NOT auto-created by Seafile — create
-    each level or pass an existing parent)."""
+    """Create a folder. Missing parents are created automatically."""
+    path = _require_path(path)
+    if path == "/":
+        raise ValueError("path must not be the library root (it already exists).")
     auth = await resolve(
         config, client, vault,
         account_token=account_token, repo_token=repo_token,
@@ -194,10 +222,9 @@ async def create_directory(
         result = await client.repo_mkdir(auth.token, path)
         return {"path": path, "created": True, "result": result}
     rid = await resolve_repo_id(client, auth, repo_id=repo_id, library_name=library_name)
-    parent = _parent_dir(path)
-    name = _basename(path)
+    # p is the NEW directory path; create_parents builds missing levels.
     result = await client.dir_operation(
-        auth.token, rid, parent, "mkdir", {"dirname": name}
+        auth.token, rid, path, "mkdir", {"create_parents": "true"}
     )
     return {"repo_id": rid, "path": path, "created": True, "result": result}
 
@@ -217,6 +244,7 @@ async def upload_file(
     user_id: str | None = None,
 ) -> dict:
     """Upload (create) a file. content is text unless is_base64=True."""
+    path = _require_path(path)
     raw = base64.b64decode(content) if is_base64 else content.encode("utf-8")
     auth = await resolve(
         config, client, vault,
@@ -249,6 +277,7 @@ async def update_file(
     user_id: str | None = None,
 ) -> dict:
     """Overwrite an existing file (creates a new version in file history)."""
+    path = _require_path(path)
     raw = base64.b64decode(content) if is_base64 else content.encode("utf-8")
     auth = await resolve(
         config, client, vault,
@@ -282,6 +311,9 @@ async def rename_item(
     user_id: str | None = None,
 ) -> dict:
     """Rename a file or folder. Repo tokens support folders only."""
+    path = _require_path(path)
+    if not (new_name or "").strip():
+        raise ValueError("new_name must not be empty.")
     auth = await resolve(
         config, client, vault,
         account_token=account_token, repo_token=repo_token,
@@ -318,8 +350,12 @@ async def move_item(
     user_id: str | None = None,
 ) -> dict:
     """Move a file or folder (account token only)."""
+    path = _require_path(path)
+    dst_dir = _require_path(dst_dir, "dst_dir")
     auth = await resolve(
-        config, client, vault, account_token=account_token, user_id=user_id
+        config, client, vault,
+        account_token=account_token, user_id=user_id,
+        repo_id=repo_id, library_name=library_name,
     )
     account_only(auth, "move_item")
     rid = await resolve_repo_id(client, auth, repo_id=repo_id, library_name=library_name)
@@ -345,8 +381,12 @@ async def copy_item(
     user_id: str | None = None,
 ) -> dict:
     """Copy a file or folder (account token only)."""
+    path = _require_path(path)
+    dst_dir = _require_path(dst_dir, "dst_dir")
     auth = await resolve(
-        config, client, vault, account_token=account_token, user_id=user_id
+        config, client, vault,
+        account_token=account_token, user_id=user_id,
+        repo_id=repo_id, library_name=library_name,
     )
     account_only(auth, "copy_item")
     rid = await resolve_repo_id(client, auth, repo_id=repo_id, library_name=library_name)
@@ -371,8 +411,11 @@ async def delete_item(
 ) -> dict:
     """Delete a file or folder (goes to library trash; account token only).
     Only registered in full mode."""
+    path = _require_path(path)
     auth = await resolve(
-        config, client, vault, account_token=account_token, user_id=user_id
+        config, client, vault,
+        account_token=account_token, user_id=user_id,
+        repo_id=repo_id, library_name=library_name,
     )
     account_only(auth, "delete_item")
     rid = await resolve_repo_id(client, auth, repo_id=repo_id, library_name=library_name)
