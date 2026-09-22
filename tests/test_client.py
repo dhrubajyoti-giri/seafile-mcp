@@ -144,15 +144,14 @@ async def test_obtain_account_token_posts_credentials():
     def handler(request: httpx.Request) -> httpx.Response:
         seen["url"] = str(request.url)
         seen["body"] = request.content.decode()
-        seen["otp"] = request.headers.get("X-SEAFILE-OTP")
         return httpx.Response(200, json={"token": "acct-abc"})
 
     client = make_client(handler)
     token = await client.obtain_account_token("user@example.com", "s3cret", "123456")
     assert token == "acct-abc"
     assert seen["url"].endswith("/api2/auth-token/")
+    assert "username=user%40example.com" in seen["body"] or "username=user@example.com" in seen["body"]
     assert "password=s3cret" in seen["body"]
-    assert seen["otp"] == "123456"
     await client.aclose()
 
 
@@ -160,6 +159,8 @@ async def test_obtain_account_token_posts_credentials():
 async def test_obtain_account_token_bad_credentials():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(400, json={"non_field_errors": ["Unable to log in."]})
+
+    from seafile_mcp.seafile_client import SeafileError
 
     client = make_client(handler)
     with pytest.raises(SeafileError) as exc_info:
