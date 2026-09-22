@@ -1,3 +1,3 @@
 """Tool implementation package."""
 
-from . import files, help, libraries, sharing, users  # noqa: F401
+from . import auth_tools, files, help, libraries, sharing  # noqa: F401

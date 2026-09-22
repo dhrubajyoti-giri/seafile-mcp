@@ -46,7 +46,7 @@ class Config:
     transport: str = "stdio"
     host: str = "127.0.0.1"
     port: int = 8000
-    vault_path: str = "~/.seafile-mcp/vault.json"
+    session_path: str = "~/.seafile-mcp/sessions.json"
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "Config":
@@ -82,8 +82,8 @@ class Config:
         except ValueError as exc:
             raise ValueError("SEAFILE_PORT must be an integer.") from exc
         host = (src.get("SEAFILE_HOST") or "127.0.0.1").strip()
-        vault_path = (
-            src.get("SEAFILE_VAULT_PATH") or "~/.seafile-mcp/vault.json"
+        session_path = (
+            src.get("SEAFILE_SESSION_PATH") or "~/.seafile-mcp/sessions.json"
         ).strip()
         return cls(
             server_url=server_url,
@@ -94,5 +94,5 @@ class Config:
             transport=transport,
             host=host,
             port=port,
-            vault_path=vault_path,
+            session_path=session_path,
         )

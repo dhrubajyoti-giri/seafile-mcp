@@ -5,29 +5,29 @@ from __future__ import annotations
 from ..auth import AuthContext, require_account, resolve_auth
 from ..config import Config
 from ..seafile_client import SeafileClient
-from ..vault import CredentialVault
+from ..sessions import SessionStore
 
 
 async def resolve(
     config: Config,
     client: SeafileClient,
-    vault: CredentialVault | None,
+    store: SessionStore | None,
     *,
     account_token: str | None = None,
     repo_token: str | None = None,
     repo_id: str | None = None,
     library_name: str | None = None,
-    user_id: str | None = None,
+    session_token: str | None = None,
 ) -> AuthContext:
-    """Resolve per-call auth params against vault record and server defaults."""
+    """Resolve per-call auth params against session record and server defaults."""
     return resolve_auth(
         config,
         account_token=account_token,
         repo_token=repo_token,
         repo_id=repo_id,
         library_name=library_name,
-        user_id=user_id,
-        vault=vault,
+        session_token=session_token,
+        store=store,
     )
 
 
