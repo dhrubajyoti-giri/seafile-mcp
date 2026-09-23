@@ -43,12 +43,21 @@ class SeafileClient:
         server_url: str,
         auth_scheme: str = "auto",
         transport: httpx.AsyncBaseTransport | None = None,
-        timeout: float = 30.0,
+        timeout: float = 60.0,
+        max_read_size: int = 10485760,
+        max_write_size: int = 52428800,
     ) -> None:
         self.server_url = server_url.rstrip("/")
         if auth_scheme not in ("auto", "token", "bearer"):
             raise ValueError("auth_scheme must be auto, token or bearer")
+        if timeout <= 0:
+            raise ValueError("timeout must be > 0.")
+        if max_read_size <= 0 or max_write_size <= 0:
+            raise ValueError("max_read_size and max_write_size must be > 0.")
         self.auth_scheme = auth_scheme
+        self.timeout = timeout
+        self.max_read_size = max_read_size
+        self.max_write_size = max_write_size
         self._client = httpx.AsyncClient(
             base_url=self.server_url, transport=transport, timeout=timeout
         )
@@ -300,10 +309,24 @@ class SeafileClient:
 
     # -- account: link-based byte transfer -----------------------------------
 
+    def _check_write_size(self, size: int) -> None:
+        if size > self.max_write_size:
+            raise SeafileError(
+                f"Refusing to send {size} bytes (over SEAFILE_MAX_WRITE_SIZE={self.max_write_size}). "
+                "Split the file or raise the limit.",
+                status_code=413,
+            )
+
     async def download_bytes(self, link: str) -> bytes:
         resp = await self._client.get(link)
         if resp.status_code >= 400:
             raise SeafileError(_error_message(resp), status_code=resp.status_code)
+        if len(resp.content) > self.max_read_size:
+            raise SeafileError(
+                f"Refusing to buffer {len(resp.content)} bytes (over SEAFILE_MAX_READ_SIZE={self.max_read_size}). "
+                "Use get_download_link and fetch the file outside the agent, or raise the limit.",
+                status_code=413,
+            )
         return resp.content
 
     async def upload_bytes(
@@ -314,6 +337,7 @@ class SeafileClient:
         content: bytes,
         replace: bool = False,
     ) -> Any:
+        self._check_write_size(len(content))
         files = {"file": (filename, content)}
         data = {
             "parent_dir": parent_dir,
@@ -332,6 +356,7 @@ class SeafileClient:
     async def update_bytes(
         self, update_link: str, target_file: str, content: bytes
     ) -> str:
+        self._check_write_size(len(content))
         files = {"file": (target_file.rsplit("/", 1)[-1], content)}
         data = {"target_file": target_file}
         resp = await self._client.post(update_link, files=files, data=data)
@@ -456,3 +481,4 @@ class SeafileClient:
 
     async def delete_share_link(self, token: str, share_token: str) -> None:
         await self._request("DELETE", f"/api/v2.1/share-links/{share_token}/", token)
+
