@@ -36,6 +36,26 @@ def _parse_repo_tokens(raw: str) -> dict[str, str]:
     return data
 
 
+def _parse_positive_float(raw: str | None, name: str, default: float) -> float:
+    try:
+        value = float((raw or "").strip() or default)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a number.") from exc
+    if value <= 0:
+        raise ValueError(f"{name} must be > 0.")
+    return value
+
+
+def _parse_positive_int(raw: str | None, name: str, default: int) -> int:
+    try:
+        value = int((raw or "").strip() or default)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer.") from exc
+    if value <= 0:
+        raise ValueError(f"{name} must be > 0.")
+    return value
+
+
 @dataclass
 class Config:
     server_url: str
@@ -47,6 +67,9 @@ class Config:
     host: str = "127.0.0.1"
     port: int = 8000
     session_path: str = "~/.seafile-mcp/sessions.json"
+    timeout: float = 60.0
+    max_read_size: int = 10485760
+    max_write_size: int = 52428800
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "Config":
@@ -85,6 +108,13 @@ class Config:
         session_path = (
             src.get("SEAFILE_SESSION_PATH") or "~/.seafile-mcp/sessions.json"
         ).strip()
+        timeout = _parse_positive_float(src.get("SEAFILE_TIMEOUT"), "SEAFILE_TIMEOUT", 60.0)
+        max_read_size = _parse_positive_int(
+            src.get("SEAFILE_MAX_READ_SIZE"), "SEAFILE_MAX_READ_SIZE", 10485760
+        )
+        max_write_size = _parse_positive_int(
+            src.get("SEAFILE_MAX_WRITE_SIZE"), "SEAFILE_MAX_WRITE_SIZE", 52428800
+        )
         return cls(
             server_url=server_url,
             account_token=account_token,
@@ -95,4 +125,7 @@ class Config:
             host=host,
             port=port,
             session_path=session_path,
+            timeout=timeout,
+            max_read_size=max_read_size,
+            max_write_size=max_write_size,
         )
