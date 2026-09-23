@@ -148,7 +148,7 @@ with notice) or, for binaries, metadata + download link. `upload_file` /
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest -q   # 68 tests, mocked HTTP (no live server needed)
+.venv/bin/python -m pytest -q   # 67 tests, mocked HTTP (no live server needed)
 ```
 
 ## Roadmap
