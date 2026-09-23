@@ -4,12 +4,12 @@ import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 try:
     from seafile_mcp.config import Config
-    from seafile_mcp.server import create_server
+    from seafile_mcp.server import create_server, run_transport
     cfg = Config.from_env()
     print(f"seafile-mcp READY mode={cfg.mode} transport={cfg.transport} store={cfg.session_path}", flush=True)
     import asyncio
     mcp, client, store = create_server(cfg)
-    asyncio.run(mcp.run_async(transport=cfg.transport or "stdio"))
+    asyncio.run(run_transport(mcp, cfg.transport or "stdio", host=cfg.host, port=cfg.port))
 except SystemExit:
     raise
 except Exception as exc:

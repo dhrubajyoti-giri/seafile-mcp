@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import inspect
 from collections.abc import Awaitable, Callable
 from functools import wraps
 from typing import Any
@@ -599,11 +600,59 @@ def create_server(
     return mcp, client, store
 
 
+def _takes_host_port(fn: Any) -> bool:
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+    return "host" in params and "port" in params
+
+
+async def run_transport(
+    mcp: Any, transport: str, host: str | None = None, port: int | None = None
+) -> None:
+    """Start the MCP transport on mcp v1 and v2 runtimes.
+
+    v1.30+/v2 expose run_stdio_async/run_sse_async/run_streamable_http_async
+    (v1 takes host/port from the constructor, v2 as kwargs); very old v1
+    releases only had run_async(transport=...).
+    """
+    name = (transport or "stdio").strip().lower()
+    if name not in ("stdio", "sse", "streamable-http"):
+        raise ValueError(
+            f"Unknown transport {name!r}. Use stdio, sse, or streamable-http."
+        )
+    if name == "stdio" and hasattr(mcp, "run_stdio_async"):
+        await mcp.run_stdio_async()
+        return
+    if name == "streamable-http" and hasattr(mcp, "run_streamable_http_async"):
+        fn = mcp.run_streamable_http_async
+        if _takes_host_port(fn) and host is not None and port is not None:
+            await fn(host=host, port=port)
+        else:
+            await fn()
+        return
+    if name == "sse" and hasattr(mcp, "run_sse_async"):
+        fn = mcp.run_sse_async
+        if _takes_host_port(fn) and host is not None and port is not None:
+            await fn(host=host, port=port)
+        else:
+            await fn()
+        return
+    if hasattr(mcp, "run_async"):  # legacy mcp v1
+        await mcp.run_async(transport=name)
+        return
+    raise AttributeError(
+        f"Cannot start transport {name!r}: MCP server object has none of "
+        "run_stdio_async/run_sse_async/run_streamable_http_async/run_async."
+    )
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="seafile-mcp", description="Seafile MCP server")
     parser.add_argument(
         "--transport",
-        choices=["stdio", "streamable-http"],
+        choices=["stdio", "sse", "streamable-http"],
         default=None,
         help="Transport (default: SEAFILE_TRANSPORT or stdio).",
     )
@@ -634,10 +683,7 @@ def main(argv: list[str] | None = None) -> None:
         client: SeafileClient | None = None
         try:
             mcp, client, _store = create_server(config, host=host, port=port)
-            if hasattr(mcp, "run_async"):
-                await mcp.run_async(transport=transport)
-            else:
-                await mcp.run_sse_async()
+            await run_transport(mcp, transport, host=host, port=port)
         except Exception as exc:
             import sys, traceback
             traceback.print_exc(file=sys.stderr)
@@ -655,4 +701,3 @@ def main(argv: list[str] | None = None) -> None:
 
 if __name__ == "__main__":
     main()
-
