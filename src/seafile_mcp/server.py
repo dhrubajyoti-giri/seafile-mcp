@@ -608,18 +608,41 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> None:
-    args = parse_args(argv)
-    config = Config.from_env()
+    try:
+        args = parse_args(argv)
+    except SystemExit:
+        raise
+    try:
+        config = Config.from_env()
+    except ValueError as exc:
+        import sys
+        print(f"CONFIG ERROR: {exc}", file=sys.stderr)
+        print("Copy .env.example to .env and set SEAFILE_SERVER_URL.", file=sys.stderr)
+        sys.exit(2)
     transport = args.transport or config.transport
     host = args.host or config.host
     port = args.port or config.port
 
     async def _run() -> None:
-        mcp, client, _store = create_server(config, host=host, port=port)
+        mcp: Any = None
+        client: SeafileClient | None = None
         try:
-            await mcp.run_async(transport=transport)
+            mcp, client, _store = create_server(config, host=host, port=port)
+            if hasattr(mcp, "run_async"):
+                await mcp.run_async(transport=transport)
+            else:
+                await mcp.run_sse_async()
+        except Exception as exc:
+            import sys, traceback
+            traceback.print_exc(file=sys.stderr)
+            print(f"FATAL: {type(exc).__name__}: {exc}", file=sys.stderr)
+            raise
         finally:
-            await client.aclose()
+            try:
+                if client is not None:
+                    await client.aclose()
+            except Exception:
+                pass
 
     asyncio.run(_run())
 
