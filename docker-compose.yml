@@ -19,18 +19,10 @@ services:
       SEAFILE_TRANSPORT: streamable-http
       SEAFILE_HOST: 0.0.0.0
       SEAFILE_PORT: 8000
-      # If using auth_login with a password secret, inject from secrets below
-      # (the server validates against Seafile; it never writes the password)
     volumes:
       - ./data:/data
-    secrets:
-      - seafile_password
     networks:
       - mcp
-
-secrets:
-  seafile_password:
-    file: /home/ubuntu/compose/seafile-mcp/.secrets/seafile_password
 
 networks:
   mcp:
