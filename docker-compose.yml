@@ -1,13 +1,37 @@
 services:
   seafile-mcp:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: seafile-mcp:local
+    container_name: seafile-mcp
+    restart: unless-stopped
+    # Do NOT override entrypoint/command — let the image's entrypoint.py run
+    # (prints READY + FATAL to stderr; creates /data; exits 1 on error)
     ports:
       - "8000:8000"
     env_file:
       - path: .env
         required: false
     environment:
+      SEAFILE_SERVER_URL: "http://seafile:80"
+      SEAFILE_SESSION_PATH: /data/sessions.json
       SEAFILE_TRANSPORT: streamable-http
       SEAFILE_HOST: 0.0.0.0
       SEAFILE_PORT: 8000
-    restart: unless-stopped
+      # If using auth_login with a password secret, inject from secrets below
+      # (the server validates against Seafile; it never writes the password)
+    volumes:
+      - ./data:/data
+    secrets:
+      - seafile_password
+    networks:
+      - mcp
+
+secrets:
+  seafile_password:
+    file: /home/ubuntu/compose/seafile-mcp/.secrets/seafile_password
+
+networks:
+  mcp:
+    external: true
