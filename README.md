@@ -55,8 +55,8 @@ curl -d "username=YOUR_EMAIL&password=YOUR_PASSWORD" \
 ```
 
 The token is permanent — after a password change it is invalidated, so run
-`auth_reauth` to refresh the session. The `get_auth_help` tool repeats these
-instructions for agents.
+`auth_reauth` to refresh the session. The `get_auth_help`
+tool repeats these instructions for agents.
 
 ### Getting a library API token (scoped, `r` or `rw`, valid until deleted)
 
@@ -79,6 +79,11 @@ cp .env.example .env   # set SEAFILE_SERVER_URL; tokens are registered at runtim
 
 Requires `SEAFILE_SERVER_URL` (no trailing slash). Auth header scheme defaults to
 `auto` (`Token`, falling back to `Bearer` on 401 — covers Seafile < 11 and ≥ 11).
+
+Transfer guardrails (all optional): `SEAFILE_TIMEOUT` seconds (default 60),
+`SEAFILE_MAX_READ_SIZE` bytes (default 10485760 — `read_file` refuses bigger
+downloads with a clear 413 error), `SEAFILE_MAX_WRITE_SIZE` bytes (default
+52428800 — uploads/updates over this are refused before sending).
 
 ## Run
 
@@ -111,7 +116,9 @@ Streamable HTTP + Docker: `cp .env.example .env`, set values, `docker compose up
 ## Safety modes (`SEAFILE_MCP_MODE`)
 
 - `read_only` — mutating tools are not registered at all.
+
 - `safe_write` (default) — create/rename/move/copy/upload allowed; deletes hidden.
+
 - `full` — also registers `delete_library` (permanent!) and `delete_item` (to trash).
 
 Overwrites create new versions in Seafile file history; deletes go to library
@@ -141,15 +148,18 @@ with notice) or, for binaries, metadata + download link. `upload_file` /
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest -q   # 58 tests, mocked HTTP (no live server needed)
+.venv/bin/python -m pytest -q   # 68 tests, mocked HTTP (no live server needed)
 ```
 
 ## Roadmap
 
 - PDF/Office text extraction (currently binaries return metadata + link)
+
 - Optional endpoint bearer-auth for the HTTP transport
+
 - Background search index for repo-token libraries (cf. `dm7500/seafile-vault-mcp`)
 
 ## License
 
 MIT
+

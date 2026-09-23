@@ -59,7 +59,13 @@ def create_server(
     mcp = FastMCP(
         SERVER_NAME, host=host or config.host, port=port or config.port
     )
-    client = client or SeafileClient(config.server_url, auth_scheme=config.auth_scheme)
+    client = client or SeafileClient(
+        config.server_url,
+        auth_scheme=config.auth_scheme,
+        timeout=config.timeout,
+        max_read_size=config.max_read_size,
+        max_write_size=config.max_write_size,
+    )
     store = store or SessionStore(config.session_path)
     mode = config.mode
 
@@ -649,3 +655,4 @@ def main(argv: list[str] | None = None) -> None:
 
 if __name__ == "__main__":
     main()
+
